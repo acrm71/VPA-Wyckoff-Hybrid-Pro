@@ -1,0 +1,161 @@
+[1mdiff --git a/src/VPA_Wyckoff_Hybrid_Pro.pine b/src/VPA_Wyckoff_Hybrid_Pro.pine[m
+[1mnew file mode 100644[m
+[1mindex 0000000..45287ce[m
+[1m--- /dev/null[m
+[1m+++ b/src/VPA_Wyckoff_Hybrid_Pro.pine[m
+[36m@@ -0,0 +1,468 @@[m
+[32m+[m[32m//@version=6[m
+[32m+[m[32mindicator([m
+[32m+[m[32m     title = "VPA Wyckoff Hybrid Pro Professional",[m
+[32m+[m[32m     shorttitle = "VPA Wyckoff Hybrid Pro",[m
+[32m+[m[32m     overlay = true,[m
+[32m+[m[32m     max_bars_back = 5000,[m
+[32m+[m[32m     max_labels_count = 500,[m
+[32m+[m[32m     max_lines_count = 500,[m
+[32m+[m[32m     max_boxes_count = 500[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// VPA WYCKOFF HYBRID PRO PROFESSIONAL[m
+[32m+[m[32m// Version: 0.2.0-dev[m
+[32m+[m[32m//[m
+[32m+[m[32m// Current implementation phase:[m
+[32m+[m[32m// Phase 1 — Shared foundation, framework context, and module contracts[m
+[32m+[m[32m//[m
+[32m+[m[32m// This script is an indicator only.[m
+[32m+[m[32m// It does not execute trades.[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// 01. SHARED CONSTANTS AND ENUMERATIONS[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32m// Direction.[m
+[32m+[m[32mconst int DIR_BEARISH = -1[m
+[32m+[m[32mconst int DIR_NEUTRAL = 0[m
+[32m+[m[32mconst int DIR_BULLISH = 1[m
+[32m+[m
+[32m+[m[32m// Availability.[m
+[32m+[m[32mconst int AVAIL_DISABLED = 0[m
+[32m+[m[32mconst int AVAIL_UNAVAILABLE = 1[m
+[32m+[m[32mconst int AVAIL_AVAILABLE = 2[m
+[32m+[m
+[32m+[m[32m// Lifecycle.[m
+[32m+[m[32mconst int LIFE_DISABLED = 0[m
+[32m+[m[32mconst int LIFE_UNAVAILABLE = 1[m
+[32m+[m[32mconst int LIFE_CANDIDATE = 2[m
+[32m+[m[32mconst int LIFE_CONFIRMED = 3[m
+[32m+[m[32mconst int LIFE_REINFORCED = 4[m
+[32m+[m[32mconst int LIFE_WEAKENING = 5[m
+[32m+[m[32mconst int LIFE_FAILED = 6[m
+[32m+[m[32mconst int LIFE_INVALIDATED = 7[m
+[32m+[m[32mconst int LIFE_EXPIRED = 8[m
+[32m+[m[32mconst int LIFE_COMPLETED = 9[m
+[32m+[m
+[32m+[m[32m// Module identifiers.[m
+[32m+[m[32mconst int MODULE_FRAMEWORK = 0[m
+[32m+[m[32mconst int MODULE_TREND = 1[m
+[32m+[m[32mconst int MODULE_RVOL = 2[m
+[32m+[m[32mconst int MODULE_STRUCTURE = 3[m
+[32m+[m[32mconst int MODULE_BOS = 4[m
+[32m+[m[32mconst int MODULE_LIQUIDITY = 5[m
+[32m+[m[32mconst int MODULE_VPA = 6[m
+[32m+[m[32mconst int MODULE_WYCKOFF = 7[m
+[32m+[m[32mconst int MODULE_INSTITUTIONAL = 8[m
+[32m+[m[32mconst int MODULE_SCORING = 9[m
+[32m+[m[32mconst int MODULE_DASHBOARD = 10[m
+[32m+[m[32mconst int MODULE_ALERTS = 11[m
+[32m+[m
+[32m+[m[32m// Dependency types.[m
+[32m+[m[32mconst int DEP_NONE = 0[m
+[32m+[m[32mconst int DEP_OPTIONAL = 1[m
+[32m+[m[32mconst int DEP_SOFT = 2[m
+[32m+[m[32mconst int DEP_HARD = 3[m
+[32m+[m
+[32m+[m[32m// Warning severity.[m
+[32m+[m[32mconst int WARN_INFO = 0[m
+[32m+[m[32mconst int WARN_DEGRADED = 1[m
+[32m+[m[32mconst int WARN_INVALID = 2[m
+[32m+[m[32mconst int WARN_CRITICAL = 3[m
+[32m+[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// 02. INPUT GROUP NAMES[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32mconst string GROUP_GENERAL = "00 — General"[m
+[32m+[m[32mconst string GROUP_PROFILES = "01 — Profiles"[m
+[32m+[m[32mconst string GROUP_TREND = "02 — Trend"[m
+[32m+[m[32mconst string GROUP_RVOL = "03 — Relative Volume"[m
+[32m+[m[32mconst string GROUP_STRUCTURE = "04 — Market Structure"[m
+[32m+[m[32mconst string GROUP_BOS = "05 — BOS and CHOCH"[m
+[32m+[m[32mconst string GROUP_LIQUIDITY = "06 — Liquidity"[m
+[32m+[m[32mconst string GROUP_VPA = "07 — VPA"[m
+[32m+[m[32mconst string GROUP_WYCKOFF = "08 — Wyckoff"[m
+[32m+[m[32mconst string GROUP_INSTITUTIONAL = "09 — Institutional Activity"[m
+[32m+[m[32mconst string GROUP_SCORING = "10 — Signal Scoring"[m
+[32m+[m[32mconst string GROUP_DASHBOARD = "11 — Dashboard"[m
+[32m+[m[32mconst string GROUP_ALERTS = "12 — Alerts"[m
+[32m+[m[32mconst string GROUP_VISUALS = "13 — Visuals"[m
+[32m+[m[32mconst string GROUP_ADVANCED = "14 — Advanced"[m
+[32m+[m[32mconst string GROUP_DEBUG = "15 — Debug"[m
+[32m+[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// 03. RAW USER INPUTS[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32mbool inputIndicatorEnabled = input.bool([m
+[32m+[m[32m     defval = true,[m
+[32m+[m[32m     title = "Enable Indicator",[m
+[32m+[m[32m     group = GROUP_GENERAL,[m
+[32m+[m[32m     tooltip = "Enables or disables the complete indicator pipeline."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mstring inputProfile = input.string([m
+[32m+[m[32m     defval = "Balanced",[m
+[32m+[m[32m     title = "Global Profile",[m
+[32m+[m[32m     options = ["Conservative", "Balanced", "Aggressive", "Custom"],[m
+[32m+[m[32m     group = GROUP_PROFILES,[m
+[32m+[m[32m     tooltip = "Selects coordinated defaults for analytical sensitivity and confirmation."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mstring inputConfirmationMode = input.string([m
+[32m+[m[32m     defval = "Confirmed Bar Only",[m
+[32m+[m[32m     title = "Confirmation Mode",[m
+[32m+[m[32m     options = [[m
+[32m+[m[32m         "Confirmed Bar Only",[m
+[32m+[m[32m         "Developing and Confirmed",[m
+[32m+[m[32m         "Developing Only"[m
+[32m+[m[32m     ],[m
+[32m+[m[32m     group = GROUP_GENERAL,[m
+[32m+[m[32m     tooltip = "Controls whether production outputs use confirmed bars, developing bars, or both."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mbool inputDebugEnabled = input.bool([m
+[32m+[m[32m     defval = false,[m
+[32m+[m[32m     title = "Enable Debug Mode",[m
+[32m+[m[32m     group = GROUP_DEBUG,[m
+[32m+[m[32m     tooltip = "Exposes approved diagnostics without changing analytical calculations."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32m// Module enablement.[m
+[32m+[m[32mbool inputTrendEnabled = input.bool(true, "Enable Trend", group = GROUP_TREND)[m
+[32m+[m[32mbool inputRvolEnabled = input.bool(true, "Enable RVOL", group = GROUP_RVOL)[m
+[32m+[m[32mbool inputStructureEnabled = input.bool(true, "Enable Market Structure", group = GROUP_STRUCTURE)[m
+[32m+[m[32mbool inputBosEnabled = input.bool(true, "Enable BOS and CHOCH", group = GROUP_BOS)[m
+[32m+[m[32mbool inputLiquidityEnabled = input.bool(true, "Enable Liquidity", group = GROUP_LIQUIDITY)[m
+[32m+[m[32mbool inputVpaEnabled = input.bool(true, "Enable VPA", group = GROUP_VPA)[m
+[32m+[m[32mbool inputWyckoffEnabled = input.bool(true, "Enable Wyckoff", group = GROUP_WYCKOFF)[m
+[32m+[m[32mbool inputInstitutionalEnabled = input.bool(true, "Enable Institutional Activity", group = GROUP_INSTITUTIONAL)[m
+[32m+[m[32mbool inputScoringEnabled = input.bool(true, "Enable Signal Scoring", group = GROUP_SCORING)[m
+[32m+[m[32mbool inputDashboardEnabled = input.bool(true, "Show Dashboard", group = GROUP_DASHBOARD)[m
+[32m+[m[32mbool inputAlertsEnabled = input.bool(true, "Enable Alerts", group = GROUP_ALERTS)[m
+[32m+[m
+[32m+[m[32m// Shared framework inputs.[m
+[32m+[m[32mint inputAtrLength = input.int([m
+[32m+[m[32m     defval = 14,[m
+[32m+[m[32m     title = "Shared ATR Length",[m
+[32m+[m[32m     minval = 1,[m
+[32m+[m[32m     maxval = 500,[m
+[32m+[m[32m     group = GROUP_ADVANCED,[m
+[32m+[m[32m     tooltip = "Framework-owned ATR length used for shared distance and volatility normalisation."[m
+[32m+[m[32m)[m

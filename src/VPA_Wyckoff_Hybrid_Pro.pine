@@ -1,0 +1,984 @@
+//@version=6
+indicator(
+     title = "VPA Wyckoff Hybrid Pro Professional",
+     shorttitle = "VPA-WH Pro",
+     overlay = true,
+     max_bars_back = 5000,
+     max_labels_count = 500,
+     max_lines_count = 500,
+     max_boxes_count = 500
+)
+
+// =============================================================================
+// VPA WYCKOFF HYBRID PRO PROFESSIONAL
+// Version: 0.2.1-dev
+//
+// Current implementation phase:
+// Phase 1 — Shared foundation, framework context, and module contracts
+//
+// This script is an indicator only.
+// It does not execute trades.
+// =============================================================================
+
+// =============================================================================
+// 01. SHARED CONSTANTS AND ENUMERATIONS
+// =============================================================================
+
+// Direction.
+const int DIR_BEARISH = -1
+const int DIR_NEUTRAL = 0
+const int DIR_BULLISH = 1
+
+// Availability.
+const int AVAIL_DISABLED = 0
+const int AVAIL_UNAVAILABLE = 1
+const int AVAIL_AVAILABLE = 2
+
+// Lifecycle.
+const int LIFE_DISABLED = 0
+const int LIFE_UNAVAILABLE = 1
+const int LIFE_CANDIDATE = 2
+const int LIFE_CONFIRMED = 3
+const int LIFE_REINFORCED = 4
+const int LIFE_WEAKENING = 5
+const int LIFE_FAILED = 6
+const int LIFE_INVALIDATED = 7
+const int LIFE_EXPIRED = 8
+const int LIFE_COMPLETED = 9
+
+// Module identifiers.
+const int MODULE_FRAMEWORK = 0
+const int MODULE_TREND = 1
+const int MODULE_RVOL = 2
+const int MODULE_STRUCTURE = 3
+const int MODULE_BOS = 4
+const int MODULE_LIQUIDITY = 5
+const int MODULE_VPA = 6
+const int MODULE_WYCKOFF = 7
+const int MODULE_INSTITUTIONAL = 8
+const int MODULE_SCORING = 9
+const int MODULE_DASHBOARD = 10
+const int MODULE_ALERTS = 11
+
+// Dependency types.
+const int DEP_NONE = 0
+const int DEP_OPTIONAL = 1
+const int DEP_SOFT = 2
+const int DEP_HARD = 3
+
+// Warning severity.
+const int WARN_INFO = 0
+const int WARN_DEGRADED = 1
+const int WARN_INVALID = 2
+const int WARN_CRITICAL = 3
+// Global profile identifiers.
+const int PROFILE_CONSERVATIVE = 0
+const int PROFILE_BALANCED = 1
+const int PROFILE_AGGRESSIVE = 2
+const int PROFILE_CUSTOM = 3
+
+// Confirmation mode identifiers.
+const int CONFIRM_CONFIRMED_ONLY = 0
+const int CONFIRM_DEVELOPING_AND_CONFIRMED = 1
+const int CONFIRM_DEVELOPING_ONLY = 2
+
+// Configuration warning codes.
+const int CFG_WARN_NONE = 0
+const int CFG_WARN_BOS_REQUIRES_STRUCTURE = 1
+const int CFG_WARN_LIQUIDITY_REQUIRES_STRUCTURE = 2
+const int CFG_WARN_LIQUIDITY_REQUIRES_BOS = 3
+const int CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE = 4
+const int CFG_WARN_SCORING_INSUFFICIENT_MODULES = 5
+const int CFG_WARN_ALERTS_SIGNAL_MODE_REQUIRES_SCORING = 6
+// =============================================================================
+// 02. INPUT GROUP NAMES
+// =============================================================================
+
+const string GROUP_GENERAL = "00 — General"
+const string GROUP_PROFILES = "01 — Profiles"
+const string GROUP_TREND = "02 — Trend"
+const string GROUP_RVOL = "03 — Relative Volume"
+const string GROUP_STRUCTURE = "04 — Market Structure"
+const string GROUP_BOS = "05 — BOS and CHOCH"
+const string GROUP_LIQUIDITY = "06 — Liquidity"
+const string GROUP_VPA = "07 — VPA"
+const string GROUP_WYCKOFF = "08 — Wyckoff"
+const string GROUP_INSTITUTIONAL = "09 — Institutional Activity"
+const string GROUP_SCORING = "10 — Signal Scoring"
+const string GROUP_DASHBOARD = "11 — Dashboard"
+const string GROUP_ALERTS = "12 — Alerts"
+const string GROUP_VISUALS = "13 — Visuals"
+const string GROUP_ADVANCED = "14 — Advanced"
+const string GROUP_DEBUG = "15 — Debug"
+
+// =============================================================================
+// 03. RAW USER INPUTS
+// =============================================================================
+
+bool inputIndicatorEnabled = input.bool(
+     defval = true,
+     title = "Enable Indicator",
+     group = GROUP_GENERAL,
+     tooltip = "Enables or disables the complete indicator pipeline."
+)
+
+string inputProfile = input.string(
+     defval = "Balanced",
+     title = "Global Profile",
+     options = ["Conservative", "Balanced", "Aggressive", "Custom"],
+     group = GROUP_PROFILES,
+     tooltip = "Selects coordinated defaults for analytical sensitivity and confirmation."
+)
+
+string inputConfirmationMode = input.string(
+     defval = "Confirmed Bar Only",
+     title = "Confirmation Mode",
+     options = [
+         "Confirmed Bar Only",
+         "Developing and Confirmed",
+         "Developing Only"
+     ],
+     group = GROUP_GENERAL,
+     tooltip = "Controls whether production outputs use confirmed bars, developing bars, or both."
+)
+
+bool inputDebugEnabled = input.bool(
+     defval = false,
+     title = "Enable Debug Mode",
+     group = GROUP_DEBUG,
+     tooltip = "Exposes approved diagnostics without changing analytical calculations."
+)
+
+// Module enablement.
+bool inputTrendEnabled = input.bool(true, "Enable Trend", group = GROUP_TREND)
+bool inputRvolEnabled = input.bool(true, "Enable RVOL", group = GROUP_RVOL)
+bool inputStructureEnabled = input.bool(true, "Enable Market Structure", group = GROUP_STRUCTURE)
+bool inputBosEnabled = input.bool(true, "Enable BOS and CHOCH", group = GROUP_BOS)
+bool inputLiquidityEnabled = input.bool(true, "Enable Liquidity", group = GROUP_LIQUIDITY)
+bool inputVpaEnabled = input.bool(true, "Enable VPA", group = GROUP_VPA)
+bool inputWyckoffEnabled = input.bool(true, "Enable Wyckoff", group = GROUP_WYCKOFF)
+bool inputInstitutionalEnabled = input.bool(true, "Enable Institutional Activity", group = GROUP_INSTITUTIONAL)
+bool inputScoringEnabled = input.bool(true, "Enable Signal Scoring", group = GROUP_SCORING)
+bool inputDashboardEnabled = input.bool(true, "Show Dashboard", group = GROUP_DASHBOARD)
+bool inputAlertsEnabled = input.bool(true, "Enable Alerts", group = GROUP_ALERTS)
+
+// Shared framework inputs.
+int inputAtrLength = input.int(
+     defval = 14,
+     title = "Shared ATR Length",
+     minval = 1,
+     maxval = 500,
+     group = GROUP_ADVANCED,
+     tooltip = "Framework-owned ATR length used for shared distance and volatility normalisation."
+)
+
+int inputMinimumHistoryBars = input.int(
+     defval = 200,
+     title = "Minimum History Bars",
+     minval = 1,
+     maxval = 5000,
+     group = GROUP_ADVANCED,
+     tooltip = "Minimum number of bars required before mature analytical outputs become available."
+)
+// Profile-controlled scoring thresholds.
+//
+// These inputs are applied directly when Global Profile is Custom.
+// Other profiles use their documented preset values.
+float inputCustomSignalConfidence = input.float(
+     defval = 65.0,
+     title = "Custom — Minimum Signal Confidence",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile minimum confidence required for a production signal."
+)
+
+float inputCustomSetupQuality = input.float(
+     defval = 65.0,
+     title = "Custom — Minimum Setup Quality",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile minimum setup-quality score."
+)
+
+float inputCustomEntryReadiness = input.float(
+     defval = 70.0,
+     title = "Custom — Minimum Entry Readiness",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile minimum readiness required before a setup may enter Ready state."
+)
+
+int inputCustomConfirmingModules = input.int(
+     defval = 3,
+     title = "Custom — Minimum Confirming Modules",
+     minval = 1,
+     maxval = 8,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile minimum number of distinct confirming analytical modules."
+)
+
+float inputCustomDirectionalDominance = input.float(
+     defval = 15.0,
+     title = "Custom — Directional Dominance",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile minimum difference between bullish and bearish composite scores."
+)
+
+int inputCustomStateConfirmationBars = input.int(
+     defval = 1,
+     title = "Custom — State Confirmation Bars",
+     minval = 1,
+     maxval = 10,
+     group = GROUP_SCORING,
+     tooltip = "Custom-profile number of confirmed bars required for persistent soft state transitions."
+)
+
+float inputCustomAlertConfidence = input.float(
+     defval = 70.0,
+     title = "Custom — Minimum Alert Confidence",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_ALERTS,
+     tooltip = "Custom-profile minimum confidence required for an alert candidate."
+)
+
+int inputCustomAlertCooldownBars = input.int(
+     defval = 3,
+     title = "Custom — Alert Cooldown Bars",
+     minval = 0,
+     maxval = 100,
+     group = GROUP_ALERTS,
+     tooltip = "Custom-profile minimum bars between similar alerts."
+)
+// =============================================================================
+// 04. USER-DEFINED TYPES
+// =============================================================================
+// Coordinated profile thresholds.
+type ProfileSettings
+    float minimumSignalConfidence
+    float minimumSetupQuality
+    float minimumEntryReadiness
+    int minimumConfirmingModules
+    float directionalDominance
+    int stateConfirmationBars
+    float minimumAlertConfidence
+    int alertCooldownBars
+
+// Complete resolved settings snapshot.
+//
+// Raw TradingView inputs are converted into this contract before analytical
+// modules execute. Downstream modules shall consume this snapshot rather than
+// interpreting profile strings independently.
+type EffectiveSettings
+    bool indicatorEnabled
+
+    int profile
+    int confirmationMode
+    bool confirmedBarOnly
+    bool developingAllowed
+    bool productionEventAllowed
+
+    int atrLength
+    int minimumHistoryBars
+
+    bool trendEnabled
+    bool rvolEnabled
+    bool structureEnabled
+
+    bool bosRequested
+    bool bosDependencyValid
+
+    bool liquidityRequested
+    bool liquidityDependencyValid
+
+    bool vpaEnabled
+
+    bool wyckoffRequested
+    bool wyckoffDependencyValid
+
+    bool institutionalEnabled
+    bool scoringEnabled
+    bool dashboardEnabled
+    bool alertsEnabled
+
+    float minimumSignalConfidence
+    float minimumSetupQuality
+    float minimumEntryReadiness
+    int minimumConfirmingModules
+    float directionalDominance
+    int stateConfirmationBars
+    float minimumAlertConfidence
+    int alertCooldownBars
+
+    bool configurationValid
+    int warningCount
+    int highestWarningSeverity
+    int highestWarningCode
+// Common output fields shared conceptually by all analytical modules.
+type ModuleOutput
+    bool enabled
+    bool available
+    bool sufficientHistory
+    bool configurationValid
+    bool dependencyValid
+    int state
+    int direction
+    int lifecycle
+    float confidence
+    int eventId
+    bool newEvent
+    int creationBar
+    int confirmationBar
+
+// Shared framework snapshot.
+type FrameworkOutput
+    bool indicatorEnabled
+    int currentBarIndex
+    bool barConfirmed
+    bool barRealtime
+    bool barHistorical
+    string symbol
+    string timeframe
+    float tickSize
+    float atr
+    bool volumeAvailable
+    bool minimumHistoryMet
+    bool debugEnabled
+
+// =============================================================================
+// 05. SHARED SAFETY HELPERS
+// =============================================================================
+
+clampConfidence(float value) =>
+    math.max(0.0, math.min(100.0, value))
+
+safeDivide(float numerator, float denominator, float fallback) =>
+    not na(denominator) and denominator != 0.0
+         ? numerator / denominator
+         : fallback
+
+isValidPrice(float value) =>
+    not na(value) and value > 0.0
+
+// =============================================================================
+// 06. SHARED STRING-CONVERSION HELPERS
+// =============================================================================
+profileToId(string profileName) =>
+    switch profileName
+        "Conservative" => PROFILE_CONSERVATIVE
+        "Balanced" => PROFILE_BALANCED
+        "Aggressive" => PROFILE_AGGRESSIVE
+        "Custom" => PROFILE_CUSTOM
+        => PROFILE_BALANCED
+
+confirmationModeToId(string confirmationName) =>
+    switch confirmationName
+        "Confirmed Bar Only" => CONFIRM_CONFIRMED_ONLY
+        "Developing and Confirmed" => CONFIRM_DEVELOPING_AND_CONFIRMED
+        "Developing Only" => CONFIRM_DEVELOPING_ONLY
+        => CONFIRM_CONFIRMED_ONLY
+
+profileToString(int profileId) =>
+    switch profileId
+        PROFILE_CONSERVATIVE => "Conservative"
+        PROFILE_BALANCED => "Balanced"
+        PROFILE_AGGRESSIVE => "Aggressive"
+        PROFILE_CUSTOM => "Custom"
+        => "Unknown"
+
+confirmationModeToString(int confirmationMode) =>
+    switch confirmationMode
+        CONFIRM_CONFIRMED_ONLY => "Confirmed Bar Only"
+        CONFIRM_DEVELOPING_AND_CONFIRMED => "Developing and Confirmed"
+        CONFIRM_DEVELOPING_ONLY => "Developing Only"
+        => "Unknown"
+
+configurationWarningToString(int warningCode) =>
+    switch warningCode
+        CFG_WARN_NONE => "None"
+        CFG_WARN_BOS_REQUIRES_STRUCTURE =>
+            "BOS and CHOCH requires Market Structure"
+        CFG_WARN_LIQUIDITY_REQUIRES_STRUCTURE =>
+            "Liquidity requires Market Structure"
+        CFG_WARN_LIQUIDITY_REQUIRES_BOS =>
+            "Liquidity requires BOS and CHOCH"
+        CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE =>
+            "Wyckoff requires Market Structure"
+        CFG_WARN_SCORING_INSUFFICIENT_MODULES =>
+            "Signal Scoring has insufficient analytical modules"
+        CFG_WARN_ALERTS_SIGNAL_MODE_REQUIRES_SCORING =>
+            "Signal alerts require Signal Scoring"
+        => "Unknown configuration warning"
+directionToString(int direction) =>
+    switch direction
+        DIR_BULLISH => "Bullish"
+        DIR_BEARISH => "Bearish"
+        => "Neutral"
+
+lifecycleToString(int lifecycle) =>
+    switch lifecycle
+        LIFE_DISABLED => "Disabled"
+        LIFE_UNAVAILABLE => "Unavailable"
+        LIFE_CANDIDATE => "Candidate"
+        LIFE_CONFIRMED => "Confirmed"
+        LIFE_REINFORCED => "Reinforced"
+        LIFE_WEAKENING => "Weakening"
+        LIFE_FAILED => "Failed"
+        LIFE_INVALIDATED => "Invalidated"
+        LIFE_EXPIRED => "Expired"
+        LIFE_COMPLETED => "Completed"
+        => "Unknown"
+
+moduleToString(int moduleId) =>
+    switch moduleId
+        MODULE_FRAMEWORK => "Framework"
+        MODULE_TREND => "Trend"
+        MODULE_RVOL => "RVOL"
+        MODULE_STRUCTURE => "Market Structure"
+        MODULE_BOS => "BOS and CHOCH"
+        MODULE_LIQUIDITY => "Liquidity"
+        MODULE_VPA => "VPA"
+        MODULE_WYCKOFF => "Wyckoff"
+        MODULE_INSTITUTIONAL => "Institutional Activity"
+        MODULE_SCORING => "Signal Scoring"
+        MODULE_DASHBOARD => "Dashboard"
+        MODULE_ALERTS => "Alerts"
+        => "Unknown"
+resolveProfileSettings(int profileId) =>
+    switch profileId
+        PROFILE_CONSERVATIVE =>
+            ProfileSettings.new(
+                 75.0,
+                 72.0,
+                 75.0,
+                 4,
+                 20.0,
+                 2,
+                 75.0,
+                 5
+             )
+
+        PROFILE_AGGRESSIVE =>
+            ProfileSettings.new(
+                 58.0,
+                 58.0,
+                 62.0,
+                 2,
+                 10.0,
+                 1,
+                 62.0,
+                 1
+             )
+
+        PROFILE_CUSTOM =>
+            ProfileSettings.new(
+                 clampConfidence(inputCustomSignalConfidence),
+                 clampConfidence(inputCustomSetupQuality),
+                 clampConfidence(inputCustomEntryReadiness),
+                 math.max(1, math.min(8, inputCustomConfirmingModules)),
+                 clampConfidence(inputCustomDirectionalDominance),
+                 math.max(1, math.min(10, inputCustomStateConfirmationBars)),
+                 clampConfidence(inputCustomAlertConfidence),
+                 math.max(0, math.min(100, inputCustomAlertCooldownBars))
+             )
+
+        =>
+            ProfileSettings.new(
+                 65.0,
+                 65.0,
+                 70.0,
+                 3,
+                 15.0,
+                 1,
+                 70.0,
+                 3
+             )
+warningSeverityForCode(int warningCode) =>
+    switch warningCode
+        CFG_WARN_NONE => WARN_INFO
+        CFG_WARN_BOS_REQUIRES_STRUCTURE => WARN_INVALID
+        CFG_WARN_LIQUIDITY_REQUIRES_STRUCTURE => WARN_INVALID
+        CFG_WARN_LIQUIDITY_REQUIRES_BOS => WARN_INVALID
+        CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE => WARN_INVALID
+        CFG_WARN_SCORING_INSUFFICIENT_MODULES => WARN_DEGRADED
+        CFG_WARN_ALERTS_SIGNAL_MODE_REQUIRES_SCORING => WARN_INVALID
+        => WARN_INFO            
+// =============================================================================
+// 07. EFFECTIVE SETTINGS RESOLUTION
+// =============================================================================
+
+// Resolve user-facing option strings once.
+int cfgProfileId = profileToId(inputProfile)
+int cfgConfirmationModeId = confirmationModeToId(inputConfirmationMode)
+
+// Resolve all profile-driven thresholds through one central function.
+ProfileSettings cfgProfileSettings = resolveProfileSettings(cfgProfileId)
+
+// Global operating state.
+bool cfgIndicatorEnabled = inputIndicatorEnabled
+
+bool cfgConfirmedBarOnly =
+     cfgConfirmationModeId == CONFIRM_CONFIRMED_ONLY
+
+bool cfgDevelopingAllowed =
+     cfgConfirmationModeId == CONFIRM_DEVELOPING_AND_CONFIRMED or
+     cfgConfirmationModeId == CONFIRM_DEVELOPING_ONLY
+
+bool cfgProductionEventAllowed =
+     cfgIndicatorEnabled and
+     (
+         cfgConfirmationModeId == CONFIRM_CONFIRMED_ONLY
+             ? barstate.isconfirmed
+             : cfgConfirmationModeId == CONFIRM_DEVELOPING_AND_CONFIRMED
+                 ? true
+                 : not barstate.isconfirmed
+     )
+
+// Resolve requested module states.
+bool cfgTrendEnabled =
+     cfgIndicatorEnabled and inputTrendEnabled
+
+bool cfgRvolEnabled =
+     cfgIndicatorEnabled and inputRvolEnabled
+
+bool cfgStructureEnabled =
+     cfgIndicatorEnabled and inputStructureEnabled
+
+bool cfgBosRequested =
+     cfgIndicatorEnabled and inputBosEnabled
+
+bool cfgLiquidityRequested =
+     cfgIndicatorEnabled and inputLiquidityEnabled
+
+bool cfgVpaEnabled =
+     cfgIndicatorEnabled and inputVpaEnabled
+
+bool cfgWyckoffRequested =
+     cfgIndicatorEnabled and inputWyckoffEnabled
+
+bool cfgInstitutionalEnabled =
+     cfgIndicatorEnabled and inputInstitutionalEnabled
+
+bool cfgScoringEnabled =
+     cfgIndicatorEnabled and inputScoringEnabled
+
+bool cfgDashboardEnabled =
+     cfgIndicatorEnabled and inputDashboardEnabled
+
+bool cfgAlertsEnabled =
+     cfgIndicatorEnabled and inputAlertsEnabled
+
+// Resolve hard dependencies.
+bool cfgBosDependencyValid =
+     cfgStructureEnabled
+
+bool cfgLiquidityStructureValid =
+     cfgStructureEnabled
+
+bool cfgLiquidityBosValid =
+     cfgBosRequested and cfgBosDependencyValid
+
+bool cfgLiquidityDependencyValid =
+     cfgLiquidityStructureValid and cfgLiquidityBosValid
+
+bool cfgWyckoffDependencyValid =
+     cfgStructureEnabled
+
+// Operational module states are useful for early execution skipping.
+bool cfgBosOperational =
+     cfgBosRequested and cfgBosDependencyValid
+
+bool cfgLiquidityOperational =
+     cfgLiquidityRequested and cfgLiquidityDependencyValid
+
+bool cfgWyckoffOperational =
+     cfgWyckoffRequested and cfgWyckoffDependencyValid
+
+// Count analytical modules capable of contributing to Signal Scoring.
+int cfgAvailableScoringModuleCount =
+     (cfgTrendEnabled ? 1 : 0) +
+     (cfgRvolEnabled ? 1 : 0) +
+     (cfgStructureEnabled ? 1 : 0) +
+     (cfgBosOperational ? 1 : 0) +
+     (cfgLiquidityOperational ? 1 : 0) +
+     (cfgVpaEnabled ? 1 : 0) +
+     (cfgWyckoffOperational ? 1 : 0) +
+     (cfgInstitutionalEnabled ? 1 : 0)
+
+// Resolve configuration warnings.
+int cfgWarningCount = 0
+int cfgHighestWarningSeverity = WARN_INFO
+int cfgHighestWarningCode = CFG_WARN_NONE
+
+if cfgBosRequested and not cfgBosDependencyValid
+    cfgWarningCount += 1
+    cfgHighestWarningSeverity := WARN_INVALID
+    cfgHighestWarningCode := CFG_WARN_BOS_REQUIRES_STRUCTURE
+
+if cfgLiquidityRequested and not cfgLiquidityStructureValid
+    cfgWarningCount += 1
+
+    if cfgHighestWarningSeverity < WARN_INVALID
+        cfgHighestWarningSeverity := WARN_INVALID
+        cfgHighestWarningCode := CFG_WARN_LIQUIDITY_REQUIRES_STRUCTURE
+
+if cfgLiquidityRequested and
+   cfgLiquidityStructureValid and
+   not cfgLiquidityBosValid
+    cfgWarningCount += 1
+
+    if cfgHighestWarningSeverity < WARN_INVALID
+        cfgHighestWarningSeverity := WARN_INVALID
+        cfgHighestWarningCode := CFG_WARN_LIQUIDITY_REQUIRES_BOS
+
+if cfgWyckoffRequested and not cfgWyckoffDependencyValid
+    cfgWarningCount += 1
+
+    if cfgHighestWarningSeverity < WARN_INVALID
+        cfgHighestWarningSeverity := WARN_INVALID
+        cfgHighestWarningCode := CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE
+
+if cfgScoringEnabled and
+   cfgAvailableScoringModuleCount <
+   cfgProfileSettings.minimumConfirmingModules
+    cfgWarningCount += 1
+
+    if cfgHighestWarningSeverity < WARN_DEGRADED
+        cfgHighestWarningSeverity := WARN_DEGRADED
+        cfgHighestWarningCode := CFG_WARN_SCORING_INSUFFICIENT_MODULES
+
+bool cfgConfigurationValid =
+     cfgHighestWarningSeverity < WARN_CRITICAL
+
+// Publish one immutable effective-settings snapshot for this execution.
+EffectiveSettings cfgOutput = EffectiveSettings.new(
+     cfgIndicatorEnabled,
+
+     cfgProfileId,
+     cfgConfirmationModeId,
+     cfgConfirmedBarOnly,
+     cfgDevelopingAllowed,
+     cfgProductionEventAllowed,
+
+     inputAtrLength,
+     inputMinimumHistoryBars,
+
+     cfgTrendEnabled,
+     cfgRvolEnabled,
+     cfgStructureEnabled,
+
+     cfgBosRequested,
+     cfgBosDependencyValid,
+
+     cfgLiquidityRequested,
+     cfgLiquidityDependencyValid,
+
+     cfgVpaEnabled,
+
+     cfgWyckoffRequested,
+     cfgWyckoffDependencyValid,
+
+     cfgInstitutionalEnabled,
+     cfgScoringEnabled,
+     cfgDashboardEnabled,
+     cfgAlertsEnabled,
+
+     cfgProfileSettings.minimumSignalConfidence,
+     cfgProfileSettings.minimumSetupQuality,
+     cfgProfileSettings.minimumEntryReadiness,
+     cfgProfileSettings.minimumConfirmingModules,
+     cfgProfileSettings.directionalDominance,
+     cfgProfileSettings.stateConfirmationBars,
+     cfgProfileSettings.minimumAlertConfidence,
+     cfgProfileSettings.alertCooldownBars,
+
+     cfgConfigurationValid,
+     cfgWarningCount,
+     cfgHighestWarningSeverity,
+     cfgHighestWarningCode
+)
+
+// =============================================================================
+// 08. FRAMEWORK CONTEXT
+// =============================================================================
+
+float fwAtr = ta.atr(inputAtrLength)
+
+bool fwVolumeAvailable = not na(volume)
+bool fwMinimumHistoryMet =
+     bar_index >= cfgOutput.minimumHistoryBars - 1
+
+FrameworkOutput fwOutput = FrameworkOutput.new(
+        cfgOutput.indicatorEnabled,  
+     bar_index,
+     barstate.isconfirmed,
+     barstate.isrealtime,
+     barstate.ishistory,
+     syminfo.tickerid,
+     timeframe.period,
+     syminfo.mintick,
+     fwAtr,
+     fwVolumeAvailable,
+     fwMinimumHistoryMet,
+     inputDebugEnabled
+)
+
+// =============================================================================
+// 09. EMPTY MODULE OUTPUT FACTORY
+// =============================================================================
+
+newEmptyModuleOutput(
+     bool enabled,
+     bool dependencyValid
+) =>
+    bool available =
+         enabled and
+         dependencyValid and
+         fwOutput.minimumHistoryMet
+
+    int lifecycle =
+         not enabled
+             ? LIFE_DISABLED
+             : available
+                 ? LIFE_CONFIRMED
+                 : LIFE_UNAVAILABLE
+
+    ModuleOutput.new(
+         enabled,
+         available,
+         fwOutput.minimumHistoryMet,
+         true,
+         dependencyValid,
+         0,
+         DIR_NEUTRAL,
+         lifecycle,
+         0.0,
+         0,
+         false,
+         na,
+         na
+     )
+
+// =============================================================================
+// 10. MODULE STUB OUTPUTS
+// =============================================================================
+
+ModuleOutput trOutput = newEmptyModuleOutput(
+     cfgOutput.trendEnabled,
+     true
+)
+
+ModuleOutput rvOutput = newEmptyModuleOutput(
+     cfgOutput.rvolEnabled,
+     true
+)
+
+ModuleOutput msOutput = newEmptyModuleOutput(
+     cfgOutput.structureEnabled,
+     true
+)
+
+ModuleOutput bcOutput = newEmptyModuleOutput(
+     cfgOutput.bosRequested,
+     cfgOutput.bosDependencyValid
+)
+
+ModuleOutput lqOutput = newEmptyModuleOutput(
+     cfgOutput.liquidityRequested,
+     cfgOutput.liquidityDependencyValid
+)
+
+ModuleOutput vpOutput = newEmptyModuleOutput(
+     cfgOutput.vpaEnabled,
+     true
+)
+
+ModuleOutput wyOutput = newEmptyModuleOutput(
+     cfgOutput.wyckoffRequested,
+     cfgOutput.wyckoffDependencyValid
+)
+
+ModuleOutput inOutput = newEmptyModuleOutput(
+     cfgOutput.institutionalEnabled,
+     true
+)
+
+ModuleOutput scOutput = newEmptyModuleOutput(
+     cfgOutput.scoringEnabled,
+     true
+)
+
+// =============================================================================
+// 11. PIPELINE PLACEHOLDERS
+// =============================================================================
+
+// Future processing order:
+//
+// 01. Effective Settings
+// 02. Framework
+// 03. Trend
+// 04. RVOL
+// 05. Market Structure
+// 06. BOS and CHOCH
+// 07. Liquidity
+// 08. VPA
+// 09. Wyckoff
+// 10. Shared Evidence
+// 11. Institutional Activity
+// 12. Signal Scoring
+// 13. Dashboard
+// 14. Alerts
+// 15. Cleanup and Debug
+
+// =============================================================================
+// 12. DEBUG OUTPUTS
+// =============================================================================
+
+// These hidden plots make early framework values inspectable through the
+// TradingView Data Window without adding visible chart clutter.
+
+plot(
+     inputDebugEnabled ? fwOutput.atr : na,
+     title = "Debug — Shared ATR",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? bar_index : na,
+     title = "Debug — Bar Index",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? (fwOutput.minimumHistoryMet ? 1 : 0) : na,
+     title = "Debug — Minimum History Met",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? (fwOutput.volumeAvailable ? 1 : 0) : na,
+     title = "Debug — Volume Available",
+     display = display.data_window
+)
+plot(
+     inputDebugEnabled ? cfgOutput.profile : na,
+     title = "Debug — Profile ID",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.confirmationMode : na,
+     title = "Debug — Confirmation Mode ID",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumSignalConfidence : na,
+     title = "Debug — Minimum Signal Confidence",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumSetupQuality : na,
+     title = "Debug — Minimum Setup Quality",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumEntryReadiness : na,
+     title = "Debug — Minimum Entry Readiness",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumConfirmingModules : na,
+     title = "Debug — Minimum Confirming Modules",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.warningCount : na,
+     title = "Debug — Configuration Warning Count",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.highestWarningSeverity : na,
+     title = "Debug — Highest Warning Severity",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.highestWarningCode : na,
+     title = "Debug — Highest Warning Code",
+     display = display.data_window
+)
+plot(
+     inputDebugEnabled ? cfgOutput.profile : na,
+     title = "Debug — Profile ID",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.confirmationMode : na,
+     title = "Debug — Confirmation Mode ID",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumSignalConfidence : na,
+     title = "Debug — Minimum Signal Confidence",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumSetupQuality : na,
+     title = "Debug — Minimum Setup Quality",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumEntryReadiness : na,
+     title = "Debug — Minimum Entry Readiness",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.minimumConfirmingModules : na,
+     title = "Debug — Minimum Confirming Modules",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.warningCount : na,
+     title = "Debug — Configuration Warning Count",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.highestWarningSeverity : na,
+     title = "Debug — Highest Warning Severity",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? cfgOutput.highestWarningCode : na,
+     title = "Debug — Highest Warning Code",
+     display = display.data_window
+)
+// Hidden foundation placeholder.
+plot(
+     na,
+     title = "Foundation Placeholder",
+     display = display.none
+)
