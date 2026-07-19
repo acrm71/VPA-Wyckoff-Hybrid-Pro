@@ -1,0 +1,790 @@
+[1mdiff --git a/src/VPA_Wyckoff_Hybrid_Pro.pine b/src/VPA_Wyckoff_Hybrid_Pro.pine[m
+[1mindex de20be0..4abf6b3 100644[m
+[1m--- a/src/VPA_Wyckoff_Hybrid_Pro.pine[m
+[1m+++ b/src/VPA_Wyckoff_Hybrid_Pro.pine[m
+[36m@@ -90,6 +90,24 @@[m [mconst int CFG_WARN_LIQUIDITY_REQUIRES_BOS = 3[m
+ const int CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE = 4[m
+ const int CFG_WARN_SCORING_INSUFFICIENT_MODULES = 5[m
+ const int CFG_WARN_ALERTS_SIGNAL_MODE_REQUIRES_SCORING = 6[m
+[32m+[m[32m// Trend states.[m
+[32m+[m[32m//[m
+[32m+[m[32m// Numeric values are append-only after implementation begins.[m
+[32m+[m[32mconst int TREND_UNAVAILABLE = 0[m
+[32m+[m[32mconst int TREND_NEUTRAL = 1[m
+[32m+[m[32mconst int TREND_BULLISH = 2[m
+[32m+[m[32mconst int TREND_BEARISH = 3[m
+[32m+[m[32mconst int TREND_STRONG_BULLISH = 4[m
+[32m+[m[32mconst int TREND_STRONG_BEARISH = 5[m
+[32m+[m[32m// Trend slope states.[m
+[32m+[m[32mconst int TREND_SLOPE_BEARISH = -1[m
+[32m+[m[32mconst int TREND_SLOPE_FLAT = 0[m
+[32m+[m[32mconst int TREND_SLOPE_BULLISH = 1[m
+[32m+[m
+[32m+[m[32m// Trend alignment states.[m
+[32m+[m[32mconst int TREND_ALIGN_BEARISH = -1[m
+[32m+[m[32mconst int TREND_ALIGN_MIXED = 0[m
+[32m+[m[32mconst int TREND_ALIGN_BULLISH = 1[m
+ // =============================================================================[m
+ // 02. INPUT GROUP NAMES[m
+ // =============================================================================[m
+[36m@@ -151,6 +169,81 @@[m [mbool inputDebugEnabled = input.bool([m
+ [m
+ // Module enablement.[m
+ bool inputTrendEnabled = input.bool(true, "Enable Trend", group = GROUP_TREND)[m
+[32m+[m
+[32m+[m[32m// Trend Engine configuration.[m
+[32m+[m[32mint inputTrendFastLength = input.int([m
+[32m+[m[32m     defval = 20,[m
+[32m+[m[32m     title = "Fast EMA Length",[m
+[32m+[m[32m     minval = 2,[m
+[32m+[m[32m     maxval = 500,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Length of the fast exponential moving average used by the Trend Engine."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mint inputTrendSlowLength = input.int([m
+[32m+[m[32m     defval = 50,[m
+[32m+[m[32m     title = "Slow EMA Length",[m
+[32m+[m[32m     minval = 3,[m
+[32m+[m[32m     maxval = 1000,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Length of the slow exponential moving average. It should be greater than the Fast EMA Length."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mint inputTrendSlopeLookback = input.int([m
+[32m+[m[32m     defval = 5,[m
+[32m+[m[32m     title = "Slope Lookback Bars",[m
+[32m+[m[32m     minval = 1,[m
+[32m+[m[32m     maxval = 100,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Bars used to measure EMA slope. Higher values produce slower, smoother slope classification."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfloat inputTrendThreshold = input.float([m
+[32m+[m[32m     defval = 55.0,[m
+[32m+[m[32m     title = "Trend Score Threshold",[m
+[32m+[m[32m     minval = 0.0,[m
+[32m+[m[32m     maxval = 100.0,[m
+[32m+[m[32m     step = 1.0,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Minimum directional score required for a Bullish or Bearish Trend state."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfloat inputTrendStrongThreshold = input.float([m
+[32m+[m[32m     defval = 75.0,[m
+[32m+[m[32m     title = "Strong Trend Score Threshold",[m
+[32m+[m[32m     minval = 0.0,[m
+[32m+[m[32m     maxval = 100.0,[m
+[32m+[m[32m     step = 1.0,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Minimum directional score required for a Strong Bullish or Strong Bearish state."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfloat inputTrendDominanceThreshold = input.float([m
+[32m+[m[32m     defval = 15.0,[m
+[32m+[m[32m     title = "Directional Dominance Threshold",[m
+[32m+[m[32m     minval = 0.0,[m
+[32m+[m[32m     maxval = 100.0,[m
+[32m+[m[32m     step = 1.0,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Minimum difference between bullish and bearish Trend scores before a directional state is allowed."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mfloat inputTrendSlopeThresholdAtr = input.float([m
+[32m+[m[32m     defval = 0.05,[m
+[32m+[m[32m     title = "Slope Threshold (ATR)",[m
+[32m+[m[32m     minval = 0.0,[m
+[32m+[m[32m     maxval = 5.0,[m
+[32m+[m[32m     step = 0.01,[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Minimum EMA slope expressed as an ATR multiple. Higher values require stronger directional movement."[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mbool inputShowTrendAverages = input.bool([m
+[32m+[m[32m     defval = false,[m
+[32m+[m[32m     title = "Show Trend Averages",[m
+[32m+[m[32m     group = GROUP_TREND,[m
+[32m+[m[32m     tooltip = "Displays the Trend Engine fast and slow EMA lines. Disabled by default."[m
+[32m+[m[32m)[m
+ bool inputRvolEnabled = input.bool(true, "Enable RVOL", group = GROUP_RVOL)[m
+ bool inputStructureEnabled = input.bool(true, "Enable Market Structure", group = GROUP_STRUCTURE)[m
+ bool inputBosEnabled = input.bool(true, "Enable BOS and CHOCH", group = GROUP_BOS)[m
+[36m@@ -339,6 +432,32 @@[m [mtype ModuleOutput[m
+     bool newEvent[m
+     int creationBar[m
+     int confirmationBar[m
+[32m+[m[32m   // Trend Engine output snapshot.[m
+[32m+[m[32m//[m
+[32m+[m[32m// The base output preserves the common module contract. Additional fields[m
+[32m+[m[32m// publish Trend-specific state, scores, calculations, and transition metadata.[m
+[32m+[m[32mtype TrendOutput[m
+[32m+[m[32m    ModuleOutput baseOutput[m
+[32m+[m
+[32m+[m[32m    int trendState[m
+[32m+[m[32m    int previousTrendState[m
+[32m+[m[32m    int trendDirection[m
+[32m+[m
+[32m+[m[32m    float trendStrength[m
+[32m+[m[32m    float trendConfidence[m
+[32m+[m[32m    float bullishScore[m
+[32m+[m[32m    float bearishScore[m
+[32m+[m
+[32m+[m[32m    float fastEma[m
+[32m+[m[32m    float slowEma[m
+[32m+[m[32m    float fastSlopeAtr[m
+[32m+[m[32m    float slowSlopeAtr[m
+[32m+[m
+[32m+[m[32m    int slopeState[m
+[32m+[m[32m    int alignmentState[m
+[32m+[m
+[32m+[m[32m    bool newTrendEvent[m
+[32m+[m[32m    int trendEventId[m[41m [m
+ [m
+ // Shared framework snapshot.[m
+ type FrameworkOutput[m
+[36m@@ -454,6 +573,203 @@[m [mmoduleToString(int moduleId) =>[m
+         MODULE_DASHBOARD => "Dashboard"[m
+         MODULE_ALERTS => "Alerts"[m
+         => "Unknown"[m
+[32m+[m[32mtrendStateToString(int trendState) =>[m
+[32m+[m[32m    switch trendState[m
+[32m+[m[32m        TREND_UNAVAILABLE => "Unavailable"[m
+[32m+[m[32m        TREND_NEUTRAL => "Neutral"[m
+[32m+[m[32m        TREND_BULLISH => "Bullish"[m
+[32m+[m[32m        TREND_BEARISH => "Bearish"[m
+[32m+[m[32m        TREND_STRONG_BULLISH => "Strong Bullish"[m
+[32m+[m[32m        TREND_STRONG_BEARISH => "Strong Bearish"[m
+[32m+[m[32m        => "Unknown"[m
+[32m+[m
+[32m+[m[32mtrendSlopeStateToString(int slopeState) =>[m
+[32m+[m[32m    switch slopeState[m
+[32m+[m[32m        TREND_SLOPE_BULLISH => "Bullish"[m
+[32m+[m[32m        TREND_SLOPE_BEARISH => "Bearish"[m
+[32m+[m[32m        TREND_SLOPE_FLAT => "Flat"[m
+[32m+[m[32m        => "Unknown"[m
+[32m+[m
+[32m+[m[32mtrendAlignmentStateToString(int alignmentState) =>[m
+[32m+[m[32m    switch alignmentState[m
+[32m+[m[32m        TREND_ALIGN_BULLISH => "Bullish"[m
+[32m+[m[32m        TREND_ALIGN_BEARISH => "Bearish"[m
+[32m+[m[32m        TREND_ALIGN_MIXED => "Mixed"[m
+[32m+[m[32m        => "Unknown"[m
+[32m+[m[32mtrendStateToDirection(int trendState) =>[m
+[32m+[m[32m    switch trendState[m
+[32m+[m[32m        TREND_BULLISH => DIR_BULLISH[m
+[32m+[m[32m        TREND_STRONG_BULLISH => DIR_BULLISH[m
+[32m+[m[32m        TREND_BEARISH => DIR_BEARISH[m
+[32m+[m[32m        TREND_STRONG_BEARISH => DIR_BEARISH[m
+[32m+[m[32m        => DIR_NEUTRAL[m
+[32m+[m[32misBullishTrendState(int trendState) =>[m
+[32m+[m[32m    trendState == TREND_BULLISH or trendState == TREND_STRONG_BULLISH[m
+[32m+[m
+[32m+[m[32misBearishTrendState(int trendState) =>[m
+[32m+[m[32m    trendState == TREND_BEARISH or trendState == TREND_STRONG_BEARISH[m
+[32m+[m
+[32m+[m[32mresolveTrendTransitionTarget(int confirmedState, int candidateState) =>[m
+[32m+[m[32m    bool directBullishToBearish =[m
+[32m+[m[32m         isBullishTrendState(confirmedState) and[m
+[32m+[m[32m         isBearishTrendState(candidateState)[m
+[32m+[m
+[32m+[m[32m    bool directBearishToBullish =[m
+[32m+[m[32m         isBearishTrendState(confirmedState) and[m
+[32m+[m[32m         isBullishTrendState(candidateState)[m
+[32m+[m
+[32m+[m[32m    directBullishToBearish or directBearishToBullish[m
+[32m+[m[32m         ? TREND_NEUTRAL[m
+[32m+[m[32m         : candidateState[m[41m      [m
+[32m+[m[32mtrendSlopeAtr(float currentValue, float priorValue, float atrValue) =>[m
+[32m+[m[32m    bool valuesValid =[m
+[32m+[m[32m         not na(currentValue) and[m
+[32m+[m[32m         not na(priorValue) and[m
+[32m+[m[32m         not na(atrValue) and[m
+[32m+[m[32m         atrValue > 0.0[m
+[32m+[m
+[32m+[m[32m    valuesValid[m
+[32m+[m[32m         ? safeDivide(currentValue - priorValue, atrValue, 0.0)[m
+[32m+[m[32m         : 0.0[m
+[32m+[m[32mresolveTrendAlignment([m
+[32m+[m[32m     float priceValue,[m
+[32m+[m[32m     float fastEma,[m
+[32m+[m[32m     float slowEma[m
+[32m+[m[32m) =>[m
+[32m+[m[32m    bool valuesValid =[m
+[32m+[m[32m         not na(priceValue) and[m
+[32m+[m[32m         not na(fastEma) and[m
+[32m+[m[32m         not na(slowEma)[m
+[32m+[m
+[32m+[m[32m    int alignmentState = TREND_ALIGN_MIXED[m
+[32m+[m
+[32m+[m[32m    if valuesValid[m
+[32m+[m[32m        if priceValue > fastEma and fastEma > slowEma[m
+[32m+[m[32m            alignmentState := TREND_ALIGN_BULLISH[m
+[32m+[m[32m        else if priceValue < fastEma and fastEma < slowEma[m
+[32m+[m[32m            alignmentState := TREND_ALIGN_BEARISH[m
+[32m+[m
+[32m+[m[32m    alignmentState[m
+[32m+[m[32mresolveTrendSlopeState([m
+[32m+[m[32m     float fastSlopeAtr,[m
+[32m+[m[32m     float slowSlopeAtr,[m
+[32m+[m[32m     float slopeThresholdAtr[m
+[32m+[m[32m) =>[m
+[32m+[m[32m    float effectiveThreshold =[m
+[32m+[m[32m         math.max(0.0, slopeThresholdAtr)[m
+[32m+[m
+[32m+[m[32m    bool bullishSlope =[m
+[32m+[m[32m         fastSlopeAtr >= effectiveThreshold and[m
+[32m+[m[32m         slowSlopeAtr >= 0.0[m
+[32m+[m
+[32m+[m[32m    bool bearishSlope =[m
+[32m+[m[32m         fastSlopeAtr <= -effectiveThreshold and[m
+[32m+[m[32m         slowSlopeAtr <= 0.0[m
+[32m+[m
+[32m+[m[32m    bullishSlope[m
+[32m+[m[32m         ? TREND_SLOPE_BULLISH[m
+[32m+[m[32m         : bearishSlope[m
+[32m+[m[32m             ? TREND_SLOPE_BEARISH[m
+[32m+[m[32m             : TREND_SLOPE_FLAT[m
+[32m+[m[32mtrendScoreDominance([m
+[32m+[m[32m     float bullishScore,[m
+[32m+[m[32m     float bearishScore[m
+[32m+[m[32m) =>[m
+[32m+[m[32m    math.abs([m
+[32m+[m[32m         clampConfidence(bullishScore) -[m
+[32m+[m[32m         clampConfidence(bearishScore)[m
+[32m+[m[32m     )[m
+[32m+[m[32mresolveTrendState([m
+[32m+[m[32m     bool available,[m
+[32m+[m[32m     float bullishScore,[m
+[32m+[m[32m     float bearishScore,[m
+[32m+[m[32m     float trendThreshold,[m
+[32m+[m[32m     float strongThreshold,[m
+[32m+[m[32m     float dominanceThreshold[m
+[32m+[m[32m) =>[m
+[32m+[m[32m    float safeBullishScore =[m
+[32m+[m[32m         clampConfidence(bullishScore)[m
+[32m+[m
+[32m+[m[32m    float safeBearishScore =[m
+[32m+[m[32m         clampConfidence(bearishScore)[m
+[32m+[m
+[32m+[m[32m    float effectiveTrendThreshold =[m
+[32m+[m[32m         clampConfidence(trendThreshold)[m
+[32m+[m
+[32m+[m[32m    float effectiveStrongThreshold =[m
+[32m+[m[32m         math.max([m
+[32m+[m[32m             effectiveTrendThreshold,[m
+[32m+[m[32m             clampConfidence(strongThreshold)[m
+[32m+[m[32m         )[m
+[32m+[m
+[32m+[m[32m    float effectiveDominanceThreshold =[m
+[32m+[m[32m         clampConfidence(dominanceThreshold)[m
+[32m+[m
+[32m+[m[32m    float dominance =[m
+[32m+[m[32m         trendScoreDominance([m
+[32m+[m[32m             safeBullishScore,[m
+[32m+[m[32m             safeBearishScore[m
+[32m+[m[32m         )[m
+[32m+[m
+[32m+[m[32m    int resolvedState = TREND_NEUTRAL[m
+[32m+[m
+[32m+[m[32m    if not available[m
+[32m+[m[32m        resolvedState := TREND_UNAVAILABLE[m
+[32m+[m[32m    else if dominance < effectiveDominanceThreshold[m
+[32m+[m[32m        resolvedState := TREND_NEUTRAL[m
+[32m+[m[32m    else if safeBullishScore > safeBearishScore[m
+[32m+[m[32m        if safeBullishScore >= effectiveStrongThreshold[m
+[32m+[m[32m            resolvedState := TREND_STRONG_BULLISH[m
+[32m+[m[32m        else if safeBullishScore >= effectiveTrendThreshold[m
+[32m+[m[32m            resolvedState := TREND_BULLISH[m
+[32m+[m[32m    else if safeBearishScore > safeBullishScore[m
+[32m+[m[32m        if safeBearishScore >= effectiveStrongThreshold[m
+[32m+[m[32m            resolvedState := TREND_STRONG_BEARISH[m
+[32m+[m[32m        else if safeBearishScore >= effectiveTrendThreshold[m
+[32m+[m[32m            resolvedState := TREND_BEARISH[m
+[32m+[m
+[32m+[m[32m    resolvedState[m
+[32m+[m[32mresolveTrendConfidence([m
+[32m+[m[32m     bool available,[m
+[32m+[m[32m     int trendState,[m
+[32m+[m[32m     float bullishScore,[m
+[32m+[m[32m     float bearishScore[m
+[32m+[m[32m) =>[m
+[32m+[m[32m    float safeBullishScore =[m
+[32m+[m[32m         clampConfidence(bullishScore)[m
+[32m+[m
+[32m+[m[32m    float safeBearishScore =[m
+[32m+[m[32m         clampConfidence(bearishScore)[m
+[32m+[m
+[32m+[m[32m    float dominantScore =[m
+[32m+[m[32m         math.max([m
+[32m+[m[32m             safeBullishScore,[m
+[32m+[m[32m             safeBearishScore[m
+[32m+[m[32m         )[m
+[32m+[m
+[32m+[m[32m    float dominance =[m
+[32m+[m[32m         trendScoreDominance([m
+[32m+[m[32m             safeBullishScore,[m
+[32m+[m[32m             safeBearishScore[m
+[32m+[m[32m         )[m
+[32m+[m
+[32m+[m[32m    float confidence =[m
+[32m+[m[32m         trendState == TREND_NEUTRAL[m
+[32m+[m[32m             ? 100.0 - dominance[m
+[32m+[m[32m             : dominantScore[m
+[32m+[m
+[32m+[m[32m    available[m
+[32m+[m[32m         ? clampConfidence(confidence)[m
+[32m+[m[32m         : 0.0[m
+[32m+[m
+[32m+[m[32mtrendNormalisedStrength(float value, float referenceValue) =>[m
+[32m+[m[32m    float safeReference =[m
+[32m+[m[32m         math.max(math.abs(referenceValue), 0.000001)[m
+[32m+[m
+[32m+[m[32m    math.min([m
+[32m+[m[32m         1.0,[m
+[32m+[m[32m         math.abs(value) / safeReference[m
+[32m+[m[32m     )[m[41m               [m
+ resolveProfileSettings(int profileId) =>[m
+     switch profileId[m
+         PROFILE_CONSERVATIVE =>[m
+[36m@@ -732,6 +1048,302 @@[m [mFrameworkOutput fwOutput = FrameworkOutput.new([m
+      fwMinimumHistoryMet,[m
+      inputDebugEnabled[m
+ )[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// 08A. TREND ENGINE CALCULATIONS[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32m// Configuration validation.[m
+[32m+[m[32mbool trConfigurationValid =[m
+[32m+[m[32m     inputTrendFastLength < inputTrendSlowLength and[m
+[32m+[m[32m     inputTrendThreshold <= inputTrendStrongThreshold[m
+[32m+[m
+[32m+[m[32m// Pine built-ins receive the original input-qualified lengths.[m
+[32m+[m[32mfloat trFastEma =[m
+[32m+[m[32m     ta.ema(close, inputTrendFastLength)[m
+[32m+[m
+[32m+[m[32mfloat trSlowEma =[m
+[32m+[m[32m     ta.ema(close, inputTrendSlowLength)[m
+[32m+[m
+[32m+[m[32m// Trend-specific history requirements.[m
+[32m+[m[32mint trRequiredHistory =[m
+[32m+[m[32m     math.max([m
+[32m+[m[32m         inputTrendSlowLength,[m
+[32m+[m[32m         inputTrendSlopeLookback + 1[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mbool trSufficientHistory =[m
+[32m+[m[32m     fwOutput.minimumHistoryMet and[m
+[32m+[m[32m     bar_index >= trRequiredHistory - 1[m
+[32m+[m
+[32m+[m[32mbool trValuesValid =[m
+[32m+[m[32m     not na(trFastEma) and[m
+[32m+[m[32m     not na(trSlowEma) and[m
+[32m+[m[32m     not na(fwOutput.atr) and[m
+[32m+[m[32m     fwOutput.atr > 0.0[m
+[32m+[m
+[32m+[m[32mbool trAvailable =[m
+[32m+[m[32m     cfgOutput.trendEnabled and[m
+[32m+[m[32m     trConfigurationValid and[m
+[32m+[m[32m     trSufficientHistory and[m
+[32m+[m[32m     trValuesValid[m
+[32m+[m
+[32m+[m[32m// ATR-normalised EMA slopes.[m
+[32m+[m[32mfloat trFastSlopeAtr =[m
+[32m+[m[32m     trendSlopeAtr([m
+[32m+[m[32m          trFastEma,[m
+[32m+[m[32m          trFastEma[inputTrendSlopeLookback],[m
+[32m+[m[32m          fwOutput.atr[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mfloat trSlowSlopeAtr =[m
+[32m+[m[32m     trendSlopeAtr([m
+[32m+[m[32m          trSlowEma,[m
+[32m+[m[32m          trSlowEma[inputTrendSlopeLookback],[m
+[32m+[m[32m          fwOutput.atr[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32m// Current alignment and slope classifications.[m
+[32m+[m[32mint trAlignmentState =[m
+[32m+[m[32m     resolveTrendAlignment([m
+[32m+[m[32m          close,[m
+[32m+[m[32m          trFastEma,[m
+[32m+[m[32m          trSlowEma[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mint trSlopeState =[m
+[32m+[m[32m     resolveTrendSlopeState([m
+[32m+[m[32m          trFastSlopeAtr,[m
+[32m+[m[32m          trSlowSlopeAtr,[m
+[32m+[m[32m          inputTrendSlopeThresholdAtr[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32m// Normalised component strengths.[m
+[32m+[m[32mfloat trFastSlopeStrength =[m
+[32m+[m[32m     trendNormalisedStrength([m
+[32m+[m[32m          trFastSlopeAtr,[m
+[32m+[m[32m          inputTrendSlopeThresholdAtr * 2.0[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mfloat trSlowSlopeStrength =[m
+[32m+[m[32m     trendNormalisedStrength([m
+[32m+[m[32m          trSlowSlopeAtr,[m
+[32m+[m[32m          inputTrendSlopeThresholdAtr * 2.0[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mfloat trSeparationAtr =[m
+[32m+[m[32m     safeDivide([m
+[32m+[m[32m          math.abs(trFastEma - trSlowEma),[m
+[32m+[m[32m          fwOutput.atr,[m
+[32m+[m[32m          0.0[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mfloat trSeparationStrength =[m
+[32m+[m[32m     trendNormalisedStrength([m
+[32m+[m[32m          trSeparationAtr,[m
+[32m+[m[32m          0.50[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32m// Independent bullish and bearish scores.[m
+[32m+[m[32m//[m
+[32m+[m[32m// Maximum contribution:[m
+[32m+[m[32m// Alignment       40[m
+[32m+[m[32m// Fast slope      25[m
+[32m+[m[32m// Slow slope      15[m
+[32m+[m[32m// EMA separation  20[m
+[32m+[m[32m// Total          100[m
+[32m+[m[32mfloat trBullishScore = 0.0[m
+[32m+[m[32mfloat trBearishScore = 0.0[m
+[32m+[m
+[32m+[m[32mif trAvailable[m
+[32m+[m[32m    if trAlignmentState == TREND_ALIGN_BULLISH[m
+[32m+[m[32m        trBullishScore += 40.0[m
+[32m+[m[32m    else if trAlignmentState == TREND_ALIGN_BEARISH[m
+[32m+[m[32m        trBearishScore += 40.0[m
+[32m+[m
+[32m+[m[32m    if trFastSlopeAtr > 0.0[m
+[32m+[m[32m        trBullishScore += 25.0 * trFastSlopeStrength[m
+[32m+[m[32m    else if trFastSlopeAtr < 0.0[m
+[32m+[m[32m        trBearishScore += 25.0 * trFastSlopeStrength[m
+[32m+[m
+[32m+[m[32m    if trSlowSlopeAtr > 0.0[m
+[32m+[m[32m        trBullishScore += 15.0 * trSlowSlopeStrength[m
+[32m+[m[32m    else if trSlowSlopeAtr < 0.0[m
+[32m+[m[32m        trBearishScore += 15.0 * trSlowSlopeStrength[m
+[32m+[m
+[32m+[m[32m    if trFastEma > trSlowEma[m
+[32m+[m[32m        trBullishScore += 20.0 * trSeparationStrength[m
+[32m+[m[32m    else if trFastEma < trSlowEma[m
+[32m+[m[32m        trBearishScore += 20.0 * trSeparationStrength[m
+[32m+[m
+[32m+[m[32mtrBullishScore :=[m
+[32m+[m[32m     clampConfidence(trBullishScore)[m
+[32m+[m
+[32m+[m[32mtrBearishScore :=[m
+[32m+[m[32m     clampConfidence(trBearishScore)[m
+[32m+[m
+[32m+[m[32m// Current resolved analytical state.[m
+[32m+[m[32m//[m
+[32m+[m[32m// Candidate analytical state used by the confirmed Trend state machine.[m
+[32m+[m[32mint trResolvedState =[m
+[32m+[m[32m     resolveTrendState([m
+[32m+[m[32m          trAvailable,[m
+[32m+[m[32m          trBullishScore,[m
+[32m+[m[32m          trBearishScore,[m
+[32m+[m[32m          inputTrendThreshold,[m
+[32m+[m[32m          inputTrendStrongThreshold,[m
+[32m+[m[32m          inputTrendDominanceThreshold[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mint trResolvedDirection =[m
+[32m+[m[32m     trendStateToDirection(trResolvedState)[m
+[32m+[m
+[32m+[m[32mfloat trResolvedConfidence =[m
+[32m+[m[32m     resolveTrendConfidence([m
+[32m+[m[32m          trAvailable,[m
+[32m+[m[32m          trResolvedState,[m
+[32m+[m[32m          trBullishScore,[m
+[32m+[m[32m          trBearishScore[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mfloat trResolvedStrength =[m
+[32m+[m[32m     math.max([m
+[32m+[m[32m          trBullishScore,[m
+[32m+[m[32m          trBearishScore[m
+[32m+[m[32m     )[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// Confirmed Trend state machine[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32m// Persistent values survive across bars.[m
+[32m+[m[32mvar int trConfirmedState = TREND_UNAVAILABLE[m
+[32m+[m[32mvar int trPreviousConfirmedState = TREND_UNAVAILABLE[m
+[32m+[m
+[32m+[m[32mvar int trPendingState = TREND_UNAVAILABLE[m
+[32m+[m[32mvar int trPendingBars = 0[m
+[32m+[m[32mvar int trPendingCreationBar = na[m
+[32m+[m
+[32m+[m[32mvar int trTrendEventId = 0[m
+[32m+[m[32mvar int trLastEventCreationBar = na[m
+[32m+[m[32mvar int trLastEventConfirmationBar = na[m
+[32m+[m
+[32m+[m[32m// This resets on every script execution and becomes true only on the bar[m
+[32m+[m[32m// where a confirmed transition is published.[m
+[32m+[m[32mbool trNewTrendEvent = false[m
+[32m+[m
+[32m+[m[32mint trRequiredConfirmationBars =[m
+[32m+[m[32m     math.max([m
+[32m+[m[32m          1,[m
+[32m+[m[32m          cfgOutput.stateConfirmationBars[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mint trTransitionTarget = resolveTrendTransitionTarget(trConfirmedState, trResolvedState)[m
+[32m+[m
+[32m+[m[32mif barstate.isconfirmed[m
+[32m+[m[32m    if not cfgOutput.trendEnabled[m
+[32m+[m[32m        trPendingState := TREND_UNAVAILABLE[m
+[32m+[m[32m        trPendingBars := 0[m
+[32m+[m[32m        trPendingCreationBar := na[m
+[32m+[m
+[32m+[m[32m        if trConfirmedState != TREND_UNAVAILABLE[m
+[32m+[m[32m            trPreviousConfirmedState := trConfirmedState[m
+[32m+[m[32m            trConfirmedState := TREND_UNAVAILABLE[m
+[32m+[m
+[32m+[m[32m            trTrendEventId += 1[m
+[32m+[m[32m            trLastEventCreationBar := bar_index[m
+[32m+[m[32m            trLastEventConfirmationBar := bar_index[m
+[32m+[m[32m            trNewTrendEvent := true[m
+[32m+[m
+[32m+[m[32m    else if not trAvailable[m
+[32m+[m[32m        trPendingState := TREND_UNAVAILABLE[m
+[32m+[m[32m        trPendingBars := 0[m
+[32m+[m[32m        trPendingCreationBar := na[m
+[32m+[m
+[32m+[m[32m        if trConfirmedState != TREND_UNAVAILABLE[m
+[32m+[m[32m            trPreviousConfirmedState := trConfirmedState[m
+[32m+[m[32m            trConfirmedState := TREND_UNAVAILABLE[m
+[32m+[m
+[32m+[m[32m            trTrendEventId += 1[m
+[32m+[m[32m            trLastEventCreationBar := bar_index[m
+[32m+[m[32m            trLastEventConfirmationBar := bar_index[m
+[32m+[m[32m            trNewTrendEvent := true[m
+[32m+[m
+[32m+[m[32m    else if trTransitionTarget == trConfirmedState[m
+[32m+[m[32m        trPendingState := trConfirmedState[m
+[32m+[m[32m        trPendingBars := 0[m
+[32m+[m[32m        trPendingCreationBar := na[m
+[32m+[m
+[32m+[m[32m    else[m
+[32m+[m[32m        if trTransitionTarget != trPendingState[m
+[32m+[m[32m            trPendingState := trTransitionTarget[m
+[32m+[m[32m            trPendingBars := 1[m
+[32m+[m[32m            trPendingCreationBar := bar_index[m
+[32m+[m[32m        else[m
+[32m+[m[32m            trPendingBars += 1[m
+[32m+[m
+[32m+[m[32m        if trPendingBars >= trRequiredConfirmationBars[m
+[32m+[m[32m            trPreviousConfirmedState := trConfirmedState[m
+[32m+[m[32m            trConfirmedState := trPendingState[m
+[32m+[m
+[32m+[m[32m            trTrendEventId += 1[m
+[32m+[m[32m            trLastEventCreationBar := trPendingCreationBar[m
+[32m+[m[32m            trLastEventConfirmationBar := bar_index[m
+[32m+[m[32m            trNewTrendEvent := true[m
+[32m+[m
+[32m+[m[32m            trPendingState := trConfirmedState[m
+[32m+[m[32m            trPendingBars := 0[m
+[32m+[m[32m            trPendingCreationBar := na[m
+[32m+[m[32mint trPublishedDirection = trendStateToDirection(trConfirmedState)[m
+[32m+[m
+[32m+[m[32mfloat trPublishedConfidence = resolveTrendConfidence(trAvailable, trConfirmedState, trBullishScore, trBearishScore)[m
+[32m+[m[32mint trLifecycle =[m
+[32m+[m[32m     not cfgOutput.trendEnabled[m
+[32m+[m[32m          ? LIFE_DISABLED[m
+[32m+[m[32m          : trAvailable[m
+[32m+[m[32m              ? LIFE_CONFIRMED[m
+[32m+[m[32m              : LIFE_UNAVAILABLE[m
+[32m+[m
+[32m+[m[32m// Publish the confirmed Trend state and immutable transition metadata.[m
+[32m+[m[32mModuleOutput trBaseOutput =[m
+[32m+[m[32m     ModuleOutput.new([m
+[32m+[m[32m          cfgOutput.trendEnabled,[m
+[32m+[m[32m          trAvailable,[m
+[32m+[m[32m          trSufficientHistory,[m
+[32m+[m[32m          trConfigurationValid,[m
+[32m+[m[32m          true,[m
+[32m+[m[32m          trConfirmedState,[m
+[32m+[m[32m          trPublishedDirection,[m
+[32m+[m[32m          trLifecycle,[m
+[32m+[m[32m          trPublishedConfidence,[m
+[32m+[m[32m          trTrendEventId,[m
+[32m+[m[32m          trNewTrendEvent,[m
+[32m+[m[32m          trLastEventCreationBar,[m
+[32m+[m[32m          trLastEventConfirmationBar[m
+[32m+[m[32m     )[m
+[32m+[m
+[32m+[m[32mTrendOutput trTrendOutput =[m
+[32m+[m[32m     TrendOutput.new([m
+[32m+[m[32m          trBaseOutput,[m
+[32m+[m
+[32m+[m[32m          trConfirmedState,[m
+[32m+[m[32m          trPreviousConfirmedState,[m
+[32m+[m[32m          trPublishedDirection,[m
+[32m+[m
+[32m+[m[32m          trResolvedStrength,[m
+[32m+[m[32m          trPublishedConfidence,[m
+[32m+[m[32m          trBullishScore,[m
+[32m+[m[32m          trBearishScore,[m
+[32m+[m
+[32m+[m[32m          trFastEma,[m
+[32m+[m[32m          trSlowEma,[m
+[32m+[m[32m          trFastSlopeAtr,[m
+[32m+[m[32m          trSlowSlopeAtr,[m
+[32m+[m
+[32m+[m[32m          trSlopeState,[m
+[32m+[m[32m          trAlignmentState,[m
+[32m+[m
+[32m+[m[32m          trNewTrendEvent,[m
+[32m+[m[32m          trTrendEventId[m
+[32m+[m[32m     )[m
+ [m
+ // =============================================================================[m
+ // 09. EMPTY MODULE OUTPUT FACTORY[m
+[36m@@ -773,10 +1385,8 @@[m [mnewEmptyModuleOutput([m
+ // 10. MODULE STUB OUTPUTS[m
+ // =============================================================================[m
+ [m
+[31m-ModuleOutput trOutput = newEmptyModuleOutput([m
+[31m-     cfgOutput.trendEnabled,[m
+[31m-     true[m
+[31m-)[m
+[32m+[m[32mModuleOutput trOutput =[m
+[32m+[m[32m     trTrendOutput.baseOutput[m
+ [m
+ ModuleOutput rvOutput = newEmptyModuleOutput([m
+      cfgOutput.rvolEnabled,[m
+[36m@@ -839,6 +1449,25 @@[m [mModuleOutput scOutput = newEmptyModuleOutput([m
+ // 13. Dashboard[m
+ // 14. Alerts[m
+ // 15. Cleanup and Debug[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m[32m// 11A. TREND VISUALS[m
+[32m+[m[32m// =============================================================================[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputShowTrendAverages and trAvailable[m
+[32m+[m[32m          ? trTrendOutput.fastEma[m
+[32m+[m[32m          : na,[m
+[32m+[m[32m     title = "Trend — Fast EMA",[m
+[32m+[m[32m     linewidth = 2[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputShowTrendAverages and trAvailable[m
+[32m+[m[32m          ? trTrendOutput.slowEma[m
+[32m+[m[32m          : na,[m
+[32m+[m[32m     title = "Trend — Slow EMA",[m
+[32m+[m[32m     linewidth = 2[m
+[32m+[m[32m)[m
+ [m
+ // =============================================================================[m
+ // 12. DEBUG OUTPUTS[m
+[36m@@ -846,6 +1475,99 @@[m [mModuleOutput scOutput = newEmptyModuleOutput([m
+ [m
+ // These hidden plots make early framework values inspectable through the[m
+ // TradingView Data Window without adding visible chart clutter.[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.trendState : na,[m
+[32m+[m[32m     title = "Debug — Trend State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trResolvedState : na,[m
+[32m+[m[32m     title = "Debug — Trend Candidate State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.previousTrendState : na,[m
+[32m+[m[32m     title = "Debug — Previous Trend State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trPendingState : na,[m
+[32m+[m[32m     title = "Debug — Pending Trend State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trPendingBars : na,[m
+[32m+[m[32m     title = "Debug — Pending Trend Bars",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? (trNewTrendEvent ? 1 : 0) : na,[m
+[32m+[m[32m     title = "Debug — New Trend Event",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendEventId : na,[m
+[32m+[m[32m     title = "Debug — Trend Event ID",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.trendDirection : na,[m
+[32m+[m[32m     title = "Debug — Trend Direction",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.trendConfidence : na,[m
+[32m+[m[32m     title = "Debug — Trend Confidence",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.trendStrength : na,[m
+[32m+[m[32m     title = "Debug — Trend Strength",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.bullishScore : na,[m
+[32m+[m[32m     title = "Debug — Trend Bullish Score",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.bearishScore : na,[m
+[32m+[m[32m     title = "Debug — Trend Bearish Score",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.fastSlopeAtr : na,[m
+[32m+[m[32m     title = "Debug — Trend Fast Slope ATR",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.slowSlopeAtr : na,[m
+[32m+[m[32m     title = "Debug — Trend Slow Slope ATR",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.slopeState : na,[m
+[32m+[m[32m     title = "Debug — Trend Slope State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mplot([m
+[32m+[m[32m     inputDebugEnabled ? trTrendOutput.alignmentState : na,[m
+[32m+[m[32m     title = "Debug — Trend Alignment State",[m
+[32m+[m[32m     display = display.data_window[m
+[32m+[m[32m)[m
+ [m
+ plot([m
+      inputDebugEnabled ? fwOutput.atr : na,[m

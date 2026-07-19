@@ -90,6 +90,24 @@ const int CFG_WARN_LIQUIDITY_REQUIRES_BOS = 3
 const int CFG_WARN_WYCKOFF_REQUIRES_STRUCTURE = 4
 const int CFG_WARN_SCORING_INSUFFICIENT_MODULES = 5
 const int CFG_WARN_ALERTS_SIGNAL_MODE_REQUIRES_SCORING = 6
+// Trend states.
+//
+// Numeric values are append-only after implementation begins.
+const int TREND_UNAVAILABLE = 0
+const int TREND_NEUTRAL = 1
+const int TREND_BULLISH = 2
+const int TREND_BEARISH = 3
+const int TREND_STRONG_BULLISH = 4
+const int TREND_STRONG_BEARISH = 5
+// Trend slope states.
+const int TREND_SLOPE_BEARISH = -1
+const int TREND_SLOPE_FLAT = 0
+const int TREND_SLOPE_BULLISH = 1
+
+// Trend alignment states.
+const int TREND_ALIGN_BEARISH = -1
+const int TREND_ALIGN_MIXED = 0
+const int TREND_ALIGN_BULLISH = 1
 // =============================================================================
 // 02. INPUT GROUP NAMES
 // =============================================================================
@@ -151,6 +169,81 @@ bool inputDebugEnabled = input.bool(
 
 // Module enablement.
 bool inputTrendEnabled = input.bool(true, "Enable Trend", group = GROUP_TREND)
+
+// Trend Engine configuration.
+int inputTrendFastLength = input.int(
+     defval = 20,
+     title = "Fast EMA Length",
+     minval = 2,
+     maxval = 500,
+     group = GROUP_TREND,
+     tooltip = "Length of the fast exponential moving average used by the Trend Engine."
+)
+
+int inputTrendSlowLength = input.int(
+     defval = 50,
+     title = "Slow EMA Length",
+     minval = 3,
+     maxval = 1000,
+     group = GROUP_TREND,
+     tooltip = "Length of the slow exponential moving average. It should be greater than the Fast EMA Length."
+)
+
+int inputTrendSlopeLookback = input.int(
+     defval = 5,
+     title = "Slope Lookback Bars",
+     minval = 1,
+     maxval = 100,
+     group = GROUP_TREND,
+     tooltip = "Bars used to measure EMA slope. Higher values produce slower, smoother slope classification."
+)
+
+float inputTrendThreshold = input.float(
+     defval = 55.0,
+     title = "Trend Score Threshold",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_TREND,
+     tooltip = "Minimum directional score required for a Bullish or Bearish Trend state."
+)
+
+float inputTrendStrongThreshold = input.float(
+     defval = 75.0,
+     title = "Strong Trend Score Threshold",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_TREND,
+     tooltip = "Minimum directional score required for a Strong Bullish or Strong Bearish state."
+)
+
+float inputTrendDominanceThreshold = input.float(
+     defval = 15.0,
+     title = "Directional Dominance Threshold",
+     minval = 0.0,
+     maxval = 100.0,
+     step = 1.0,
+     group = GROUP_TREND,
+     tooltip = "Minimum difference between bullish and bearish Trend scores before a directional state is allowed."
+)
+
+float inputTrendSlopeThresholdAtr = input.float(
+     defval = 0.05,
+     title = "Slope Threshold (ATR)",
+     minval = 0.0,
+     maxval = 5.0,
+     step = 0.01,
+     group = GROUP_TREND,
+     tooltip = "Minimum EMA slope expressed as an ATR multiple. Higher values require stronger directional movement."
+)
+
+bool inputShowTrendAverages = input.bool(
+     defval = false,
+     title = "Show Trend Averages",
+     group = GROUP_TREND,
+     tooltip = "Displays the Trend Engine fast and slow EMA lines. Disabled by default."
+)
 bool inputRvolEnabled = input.bool(true, "Enable RVOL", group = GROUP_RVOL)
 bool inputStructureEnabled = input.bool(true, "Enable Market Structure", group = GROUP_STRUCTURE)
 bool inputBosEnabled = input.bool(true, "Enable BOS and CHOCH", group = GROUP_BOS)
@@ -339,6 +432,32 @@ type ModuleOutput
     bool newEvent
     int creationBar
     int confirmationBar
+   // Trend Engine output snapshot.
+//
+// The base output preserves the common module contract. Additional fields
+// publish Trend-specific state, scores, calculations, and transition metadata.
+type TrendOutput
+    ModuleOutput baseOutput
+
+    int trendState
+    int previousTrendState
+    int trendDirection
+
+    float trendStrength
+    float trendConfidence
+    float bullishScore
+    float bearishScore
+
+    float fastEma
+    float slowEma
+    float fastSlopeAtr
+    float slowSlopeAtr
+
+    int slopeState
+    int alignmentState
+
+    bool newTrendEvent
+    int trendEventId 
 
 // Shared framework snapshot.
 type FrameworkOutput
@@ -454,6 +573,203 @@ moduleToString(int moduleId) =>
         MODULE_DASHBOARD => "Dashboard"
         MODULE_ALERTS => "Alerts"
         => "Unknown"
+trendStateToString(int trendState) =>
+    switch trendState
+        TREND_UNAVAILABLE => "Unavailable"
+        TREND_NEUTRAL => "Neutral"
+        TREND_BULLISH => "Bullish"
+        TREND_BEARISH => "Bearish"
+        TREND_STRONG_BULLISH => "Strong Bullish"
+        TREND_STRONG_BEARISH => "Strong Bearish"
+        => "Unknown"
+
+trendSlopeStateToString(int slopeState) =>
+    switch slopeState
+        TREND_SLOPE_BULLISH => "Bullish"
+        TREND_SLOPE_BEARISH => "Bearish"
+        TREND_SLOPE_FLAT => "Flat"
+        => "Unknown"
+
+trendAlignmentStateToString(int alignmentState) =>
+    switch alignmentState
+        TREND_ALIGN_BULLISH => "Bullish"
+        TREND_ALIGN_BEARISH => "Bearish"
+        TREND_ALIGN_MIXED => "Mixed"
+        => "Unknown"
+trendStateToDirection(int trendState) =>
+    switch trendState
+        TREND_BULLISH => DIR_BULLISH
+        TREND_STRONG_BULLISH => DIR_BULLISH
+        TREND_BEARISH => DIR_BEARISH
+        TREND_STRONG_BEARISH => DIR_BEARISH
+        => DIR_NEUTRAL
+isBullishTrendState(int trendState) =>
+    trendState == TREND_BULLISH or trendState == TREND_STRONG_BULLISH
+
+isBearishTrendState(int trendState) =>
+    trendState == TREND_BEARISH or trendState == TREND_STRONG_BEARISH
+
+resolveTrendTransitionTarget(int confirmedState, int candidateState) =>
+    bool directBullishToBearish =
+         isBullishTrendState(confirmedState) and
+         isBearishTrendState(candidateState)
+
+    bool directBearishToBullish =
+         isBearishTrendState(confirmedState) and
+         isBullishTrendState(candidateState)
+
+    directBullishToBearish or directBearishToBullish
+         ? TREND_NEUTRAL
+         : candidateState      
+trendSlopeAtr(float currentValue, float priorValue, float atrValue) =>
+    bool valuesValid =
+         not na(currentValue) and
+         not na(priorValue) and
+         not na(atrValue) and
+         atrValue > 0.0
+
+    valuesValid
+         ? safeDivide(currentValue - priorValue, atrValue, 0.0)
+         : 0.0
+resolveTrendAlignment(
+     float priceValue,
+     float fastEma,
+     float slowEma
+) =>
+    bool valuesValid =
+         not na(priceValue) and
+         not na(fastEma) and
+         not na(slowEma)
+
+    int alignmentState = TREND_ALIGN_MIXED
+
+    if valuesValid
+        if priceValue > fastEma and fastEma > slowEma
+            alignmentState := TREND_ALIGN_BULLISH
+        else if priceValue < fastEma and fastEma < slowEma
+            alignmentState := TREND_ALIGN_BEARISH
+
+    alignmentState
+resolveTrendSlopeState(
+     float fastSlopeAtr,
+     float slowSlopeAtr,
+     float slopeThresholdAtr
+) =>
+    float effectiveThreshold =
+         math.max(0.0, slopeThresholdAtr)
+
+    bool bullishSlope =
+         fastSlopeAtr >= effectiveThreshold and
+         slowSlopeAtr >= 0.0
+
+    bool bearishSlope =
+         fastSlopeAtr <= -effectiveThreshold and
+         slowSlopeAtr <= 0.0
+
+    bullishSlope
+         ? TREND_SLOPE_BULLISH
+         : bearishSlope
+             ? TREND_SLOPE_BEARISH
+             : TREND_SLOPE_FLAT
+trendScoreDominance(
+     float bullishScore,
+     float bearishScore
+) =>
+    math.abs(
+         clampConfidence(bullishScore) -
+         clampConfidence(bearishScore)
+     )
+resolveTrendState(
+     bool available,
+     float bullishScore,
+     float bearishScore,
+     float trendThreshold,
+     float strongThreshold,
+     float dominanceThreshold
+) =>
+    float safeBullishScore =
+         clampConfidence(bullishScore)
+
+    float safeBearishScore =
+         clampConfidence(bearishScore)
+
+    float effectiveTrendThreshold =
+         clampConfidence(trendThreshold)
+
+    float effectiveStrongThreshold =
+         math.max(
+             effectiveTrendThreshold,
+             clampConfidence(strongThreshold)
+         )
+
+    float effectiveDominanceThreshold =
+         clampConfidence(dominanceThreshold)
+
+    float dominance =
+         trendScoreDominance(
+             safeBullishScore,
+             safeBearishScore
+         )
+
+    int resolvedState = TREND_NEUTRAL
+
+    if not available
+        resolvedState := TREND_UNAVAILABLE
+    else if dominance < effectiveDominanceThreshold
+        resolvedState := TREND_NEUTRAL
+    else if safeBullishScore > safeBearishScore
+        if safeBullishScore >= effectiveStrongThreshold
+            resolvedState := TREND_STRONG_BULLISH
+        else if safeBullishScore >= effectiveTrendThreshold
+            resolvedState := TREND_BULLISH
+    else if safeBearishScore > safeBullishScore
+        if safeBearishScore >= effectiveStrongThreshold
+            resolvedState := TREND_STRONG_BEARISH
+        else if safeBearishScore >= effectiveTrendThreshold
+            resolvedState := TREND_BEARISH
+
+    resolvedState
+resolveTrendConfidence(
+     bool available,
+     int trendState,
+     float bullishScore,
+     float bearishScore
+) =>
+    float safeBullishScore =
+         clampConfidence(bullishScore)
+
+    float safeBearishScore =
+         clampConfidence(bearishScore)
+
+    float dominantScore =
+         math.max(
+             safeBullishScore,
+             safeBearishScore
+         )
+
+    float dominance =
+         trendScoreDominance(
+             safeBullishScore,
+             safeBearishScore
+         )
+
+    float confidence =
+         trendState == TREND_NEUTRAL
+             ? 100.0 - dominance
+             : dominantScore
+
+    available
+         ? clampConfidence(confidence)
+         : 0.0
+
+trendNormalisedStrength(float value, float referenceValue) =>
+    float safeReference =
+         math.max(math.abs(referenceValue), 0.000001)
+
+    math.min(
+         1.0,
+         math.abs(value) / safeReference
+     )               
 resolveProfileSettings(int profileId) =>
     switch profileId
         PROFILE_CONSERVATIVE =>
@@ -732,6 +1048,302 @@ FrameworkOutput fwOutput = FrameworkOutput.new(
      fwMinimumHistoryMet,
      inputDebugEnabled
 )
+// =============================================================================
+// 08A. TREND ENGINE CALCULATIONS
+// =============================================================================
+
+// Configuration validation.
+bool trConfigurationValid =
+     inputTrendFastLength < inputTrendSlowLength and
+     inputTrendThreshold <= inputTrendStrongThreshold
+
+// Pine built-ins receive the original input-qualified lengths.
+float trFastEma =
+     ta.ema(close, inputTrendFastLength)
+
+float trSlowEma =
+     ta.ema(close, inputTrendSlowLength)
+
+// Trend-specific history requirements.
+int trRequiredHistory =
+     math.max(
+         inputTrendSlowLength,
+         inputTrendSlopeLookback + 1
+     )
+
+bool trSufficientHistory =
+     fwOutput.minimumHistoryMet and
+     bar_index >= trRequiredHistory - 1
+
+bool trValuesValid =
+     not na(trFastEma) and
+     not na(trSlowEma) and
+     not na(fwOutput.atr) and
+     fwOutput.atr > 0.0
+
+bool trAvailable =
+     cfgOutput.trendEnabled and
+     trConfigurationValid and
+     trSufficientHistory and
+     trValuesValid
+
+// ATR-normalised EMA slopes.
+float trFastSlopeAtr =
+     trendSlopeAtr(
+          trFastEma,
+          trFastEma[inputTrendSlopeLookback],
+          fwOutput.atr
+     )
+
+float trSlowSlopeAtr =
+     trendSlopeAtr(
+          trSlowEma,
+          trSlowEma[inputTrendSlopeLookback],
+          fwOutput.atr
+     )
+
+// Current alignment and slope classifications.
+int trAlignmentState =
+     resolveTrendAlignment(
+          close,
+          trFastEma,
+          trSlowEma
+     )
+
+int trSlopeState =
+     resolveTrendSlopeState(
+          trFastSlopeAtr,
+          trSlowSlopeAtr,
+          inputTrendSlopeThresholdAtr
+     )
+
+// Normalised component strengths.
+float trFastSlopeStrength =
+     trendNormalisedStrength(
+          trFastSlopeAtr,
+          inputTrendSlopeThresholdAtr * 2.0
+     )
+
+float trSlowSlopeStrength =
+     trendNormalisedStrength(
+          trSlowSlopeAtr,
+          inputTrendSlopeThresholdAtr * 2.0
+     )
+
+float trSeparationAtr =
+     safeDivide(
+          math.abs(trFastEma - trSlowEma),
+          fwOutput.atr,
+          0.0
+     )
+
+float trSeparationStrength =
+     trendNormalisedStrength(
+          trSeparationAtr,
+          0.50
+     )
+
+// Independent bullish and bearish scores.
+//
+// Maximum contribution:
+// Alignment       40
+// Fast slope      25
+// Slow slope      15
+// EMA separation  20
+// Total          100
+float trBullishScore = 0.0
+float trBearishScore = 0.0
+
+if trAvailable
+    if trAlignmentState == TREND_ALIGN_BULLISH
+        trBullishScore += 40.0
+    else if trAlignmentState == TREND_ALIGN_BEARISH
+        trBearishScore += 40.0
+
+    if trFastSlopeAtr > 0.0
+        trBullishScore += 25.0 * trFastSlopeStrength
+    else if trFastSlopeAtr < 0.0
+        trBearishScore += 25.0 * trFastSlopeStrength
+
+    if trSlowSlopeAtr > 0.0
+        trBullishScore += 15.0 * trSlowSlopeStrength
+    else if trSlowSlopeAtr < 0.0
+        trBearishScore += 15.0 * trSlowSlopeStrength
+
+    if trFastEma > trSlowEma
+        trBullishScore += 20.0 * trSeparationStrength
+    else if trFastEma < trSlowEma
+        trBearishScore += 20.0 * trSeparationStrength
+
+trBullishScore :=
+     clampConfidence(trBullishScore)
+
+trBearishScore :=
+     clampConfidence(trBearishScore)
+
+// Current resolved analytical state.
+//
+// Candidate analytical state used by the confirmed Trend state machine.
+int trResolvedState =
+     resolveTrendState(
+          trAvailable,
+          trBullishScore,
+          trBearishScore,
+          inputTrendThreshold,
+          inputTrendStrongThreshold,
+          inputTrendDominanceThreshold
+     )
+
+int trResolvedDirection =
+     trendStateToDirection(trResolvedState)
+
+float trResolvedConfidence =
+     resolveTrendConfidence(
+          trAvailable,
+          trResolvedState,
+          trBullishScore,
+          trBearishScore
+     )
+
+float trResolvedStrength =
+     math.max(
+          trBullishScore,
+          trBearishScore
+     )
+// =============================================================================
+// Confirmed Trend state machine
+// =============================================================================
+
+// Persistent values survive across bars.
+var int trConfirmedState = TREND_UNAVAILABLE
+var int trPreviousConfirmedState = TREND_UNAVAILABLE
+
+var int trPendingState = TREND_UNAVAILABLE
+var int trPendingBars = 0
+var int trPendingCreationBar = na
+
+var int trTrendEventId = 0
+var int trLastEventCreationBar = na
+var int trLastEventConfirmationBar = na
+
+// This resets on every script execution and becomes true only on the bar
+// where a confirmed transition is published.
+bool trNewTrendEvent = false
+
+int trRequiredConfirmationBars =
+     math.max(
+          1,
+          cfgOutput.stateConfirmationBars
+     )
+
+int trTransitionTarget = resolveTrendTransitionTarget(trConfirmedState, trResolvedState)
+
+if barstate.isconfirmed
+    if not cfgOutput.trendEnabled
+        trPendingState := TREND_UNAVAILABLE
+        trPendingBars := 0
+        trPendingCreationBar := na
+
+        if trConfirmedState != TREND_UNAVAILABLE
+            trPreviousConfirmedState := trConfirmedState
+            trConfirmedState := TREND_UNAVAILABLE
+
+            trTrendEventId += 1
+            trLastEventCreationBar := bar_index
+            trLastEventConfirmationBar := bar_index
+            trNewTrendEvent := true
+
+    else if not trAvailable
+        trPendingState := TREND_UNAVAILABLE
+        trPendingBars := 0
+        trPendingCreationBar := na
+
+        if trConfirmedState != TREND_UNAVAILABLE
+            trPreviousConfirmedState := trConfirmedState
+            trConfirmedState := TREND_UNAVAILABLE
+
+            trTrendEventId += 1
+            trLastEventCreationBar := bar_index
+            trLastEventConfirmationBar := bar_index
+            trNewTrendEvent := true
+
+    else if trTransitionTarget == trConfirmedState
+        trPendingState := trConfirmedState
+        trPendingBars := 0
+        trPendingCreationBar := na
+
+    else
+        if trTransitionTarget != trPendingState
+            trPendingState := trTransitionTarget
+            trPendingBars := 1
+            trPendingCreationBar := bar_index
+        else
+            trPendingBars += 1
+
+        if trPendingBars >= trRequiredConfirmationBars
+            trPreviousConfirmedState := trConfirmedState
+            trConfirmedState := trPendingState
+
+            trTrendEventId += 1
+            trLastEventCreationBar := trPendingCreationBar
+            trLastEventConfirmationBar := bar_index
+            trNewTrendEvent := true
+
+            trPendingState := trConfirmedState
+            trPendingBars := 0
+            trPendingCreationBar := na
+int trPublishedDirection = trendStateToDirection(trConfirmedState)
+
+float trPublishedConfidence = resolveTrendConfidence(trAvailable, trConfirmedState, trBullishScore, trBearishScore)
+int trLifecycle =
+     not cfgOutput.trendEnabled
+          ? LIFE_DISABLED
+          : trAvailable
+              ? LIFE_CONFIRMED
+              : LIFE_UNAVAILABLE
+
+// Publish the confirmed Trend state and immutable transition metadata.
+ModuleOutput trBaseOutput =
+     ModuleOutput.new(
+          cfgOutput.trendEnabled,
+          trAvailable,
+          trSufficientHistory,
+          trConfigurationValid,
+          true,
+          trConfirmedState,
+          trPublishedDirection,
+          trLifecycle,
+          trPublishedConfidence,
+          trTrendEventId,
+          trNewTrendEvent,
+          trLastEventCreationBar,
+          trLastEventConfirmationBar
+     )
+
+TrendOutput trTrendOutput =
+     TrendOutput.new(
+          trBaseOutput,
+
+          trConfirmedState,
+          trPreviousConfirmedState,
+          trPublishedDirection,
+
+          trResolvedStrength,
+          trPublishedConfidence,
+          trBullishScore,
+          trBearishScore,
+
+          trFastEma,
+          trSlowEma,
+          trFastSlopeAtr,
+          trSlowSlopeAtr,
+
+          trSlopeState,
+          trAlignmentState,
+
+          trNewTrendEvent,
+          trTrendEventId
+     )
 
 // =============================================================================
 // 09. EMPTY MODULE OUTPUT FACTORY
@@ -773,10 +1385,8 @@ newEmptyModuleOutput(
 // 10. MODULE STUB OUTPUTS
 // =============================================================================
 
-ModuleOutput trOutput = newEmptyModuleOutput(
-     cfgOutput.trendEnabled,
-     true
-)
+ModuleOutput trOutput =
+     trTrendOutput.baseOutput
 
 ModuleOutput rvOutput = newEmptyModuleOutput(
      cfgOutput.rvolEnabled,
@@ -839,6 +1449,25 @@ ModuleOutput scOutput = newEmptyModuleOutput(
 // 13. Dashboard
 // 14. Alerts
 // 15. Cleanup and Debug
+// =============================================================================
+// 11A. TREND VISUALS
+// =============================================================================
+
+plot(
+     inputShowTrendAverages and trAvailable
+          ? trTrendOutput.fastEma
+          : na,
+     title = "Trend — Fast EMA",
+     linewidth = 2
+)
+
+plot(
+     inputShowTrendAverages and trAvailable
+          ? trTrendOutput.slowEma
+          : na,
+     title = "Trend — Slow EMA",
+     linewidth = 2
+)
 
 // =============================================================================
 // 12. DEBUG OUTPUTS
@@ -846,6 +1475,99 @@ ModuleOutput scOutput = newEmptyModuleOutput(
 
 // These hidden plots make early framework values inspectable through the
 // TradingView Data Window without adding visible chart clutter.
+plot(
+     inputDebugEnabled ? trTrendOutput.trendState : na,
+     title = "Debug — Trend State",
+     display = display.data_window
+)
+plot(
+     inputDebugEnabled ? trResolvedState : na,
+     title = "Debug — Trend Candidate State",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.previousTrendState : na,
+     title = "Debug — Previous Trend State",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trPendingState : na,
+     title = "Debug — Pending Trend State",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trPendingBars : na,
+     title = "Debug — Pending Trend Bars",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? (trNewTrendEvent ? 1 : 0) : na,
+     title = "Debug — New Trend Event",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendEventId : na,
+     title = "Debug — Trend Event ID",
+     display = display.data_window
+)
+plot(
+     inputDebugEnabled ? trTrendOutput.trendDirection : na,
+     title = "Debug — Trend Direction",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.trendConfidence : na,
+     title = "Debug — Trend Confidence",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.trendStrength : na,
+     title = "Debug — Trend Strength",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.bullishScore : na,
+     title = "Debug — Trend Bullish Score",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.bearishScore : na,
+     title = "Debug — Trend Bearish Score",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.fastSlopeAtr : na,
+     title = "Debug — Trend Fast Slope ATR",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.slowSlopeAtr : na,
+     title = "Debug — Trend Slow Slope ATR",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.slopeState : na,
+     title = "Debug — Trend Slope State",
+     display = display.data_window
+)
+
+plot(
+     inputDebugEnabled ? trTrendOutput.alignmentState : na,
+     title = "Debug — Trend Alignment State",
+     display = display.data_window
+)
 
 plot(
      inputDebugEnabled ? fwOutput.atr : na,
